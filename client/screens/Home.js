@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Button, Text, TextInput } from 'react-native-paper';
 import DataText from '../components/DataText';
+import Charts from '../components/Charts';
 
 let wsCurrent = null;
 
@@ -27,9 +28,11 @@ export default function Home() {
                 password: password,
             }),
         })
-            .then((response) => response.json())
-            .then((json) => {
-                if (json.result === 'OK') return true;
+            .then((response) => response.text())
+            .then((responseData) => {
+                console.log(responseData);
+                const data = JSON.parse(responseData);
+                if (data.result === 'OK') return true;
                 else return false;
             })
             .catch((error) => console.log(error));
@@ -131,6 +134,7 @@ export default function Home() {
             ) : (
                 <ActivityIndicator animating={true} />
             )}
+            <Charts />
         </View>
     );
 }
@@ -141,6 +145,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
         alignItems: 'center',
         justifyContent: 'center',
+        width: '100%',
     },
     column: {
         justifyContent: 'flex-start',
