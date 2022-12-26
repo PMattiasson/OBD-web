@@ -42,9 +42,18 @@ let db = new sqlite3.Database('./database/obd.db', (err) => {
     }
     console.log('Connected to the OBD database.');
 });
-db.run('CREATE TABLE IF NOT EXISTS data(id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, vehicle_speed INTEGER, engine_rpm INTEGER, coolant_temperature INTEGER)');
+db.get("PRAGMA foreign_keys = ON");
 db.run('CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, username VARCHAR(255) NOT NULL, password VARCHAR(255) NOT NULL)');
-const sqlInsert = 'INSERT INTO data(time, vehicle_speed, engine_rpm, coolant_temperature) VALUES(?,?,?,?)';
+db.run(`CREATE TABLE IF NOT EXISTS data(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+    time TEXT NOT NULL, 
+    vehicle_speed INTEGER, 
+    engine_rpm INTEGER, 
+    coolant_temperature INTEGER, 
+    user_id INTEGER NOT NULL, 
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    )`);
+const sqlInsert = 'INSERT INTO data(time, vehicle_speed, engine_rpm, coolant_temperature, user_id) VALUES(?,?,?,?,?)';
 
 app.post('/login', function (req, res) {
     db.get('SELECT * FROM users WHERE username = ?', [req.body?.username], (err, user) => {
@@ -59,7 +68,7 @@ app.post('/login', function (req, res) {
         if (user.password !== password) {
             
             console.log('Invalid password');
-            return res.send({ result: 'UNAUTHORIZED', message: 'Invalid username or password'});
+            return res.send({ result: 'UNAUTHORIZED', message: 'Invalid password'});
         }
     
         console.log(`Updating session for user ${user.id}`);
@@ -107,6 +116,15 @@ app.get('/db/arr', function (req, res) {
         })
 
         res.send(result);
+    });
+});
+
+app.get('/users/:userId', (req, res) => {
+    const user_id = req.params.userId;
+    db.all('SELECT * FROM data WHERE user_id = ?', [user_id], (err, rows) => {
+        if (err) return console.error(err.message);
+
+        res.send(rows);
     });
 });
 
@@ -163,7 +181,7 @@ wss.on('connection', function (ws, request) {
         });
 
         const dataObj = JSON.parse(message);
-        const dataVals = [dataObj?.timestamp, dataObj?.VehicleSpeed, dataObj?.EngineRPM, dataObj?.CoolantTemperature];
+        const dataVals = [dataObj?.timestamp, dataObj?.VehicleSpeed, dataObj?.EngineRPM, dataObj?.CoolantTemperature, userId];
         db.run(sqlInsert, dataVals, function(err) {
             if (err) {
                 return console.error(err.message);
