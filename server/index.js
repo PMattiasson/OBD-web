@@ -9,6 +9,7 @@ const http = require("http");
 import session from 'express-session';
 import { v4 as uuidv4 } from 'uuid';
 const sqlite3 = require('sqlite3').verbose();
+import { createHash } from 'crypto';
 
 const PORT = process.env.PORT;
 const USERNAME = process.env.USERNAME;
@@ -41,20 +42,30 @@ let db = new sqlite3.Database('./database/obd.db', (err) => {
     }
     console.log('Connected to the OBD database.');
 });
-db.run('CREATE TABLE IF NOT EXISTS data(time TEXT NOT NULL, vehicle_speed INTEGER, engine_rpm INTEGER, coolant_temperature INTEGER)');
+db.run('CREATE TABLE IF NOT EXISTS data(id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, vehicle_speed INTEGER, engine_rpm INTEGER, coolant_temperature INTEGER)');
+db.run('CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, username VARCHAR(255) NOT NULL, password VARCHAR(255) NOT NULL)');
 const sqlInsert = 'INSERT INTO data(time, vehicle_speed, engine_rpm, coolant_temperature) VALUES(?,?,?,?)';
 
 app.post('/login', function (req, res) {
-    if (req.body.username !== USERNAME || req.body.password !== PASSWORD) {
-        console.log('Unauthorized user');
-        return res.send({ result: 'UNAUTHORIZED', message: 'Invalid username or password'});
-    }
+    db.get('SELECT * FROM users WHERE username = ?', [req.body?.username], (err, user) => {
+        if (err) return console.error(err.message);
 
-    const id = uuidv4();
-
-    console.log(`Updating session for user ${id}`);
-    req.session.userId = id;
-    res.send({ result: 'OK', message: 'Session updated' });
+        console.log(user);
+        if (!user) {
+            console.log('Unauthorized user', req.body?.username);
+            return res.send({ result: 'UNAUTHORIZED', message: 'Invalid username or password'});
+        } 
+        const password = createHash('md5').update(req.body.password).digest('hex');
+        if (user.password !== password) {
+            
+            console.log('Invalid password');
+            return res.send({ result: 'UNAUTHORIZED', message: 'Invalid username or password'});
+        }
+    
+        console.log(`Updating session for user ${user.id}`);
+        req.session.userId = user.id;
+        res.send({ result: 'OK', message: 'Session updated' });
+    });
 });
 
 app.delete('/logout', function (request, response) {
@@ -68,6 +79,21 @@ app.delete('/logout', function (request, response) {
     });
 });
 
+app.post('/register', function(req, res) {
+    if (!req.body?.username || !req.body?.password) {
+        res.send({ result: 'FAIL', message: 'Provide both username and password' });
+        return;
+    }
+
+    const password = createHash('md5').update(req.body.password).digest('hex');
+
+    db.run('INSERT INTO users(username, password) VALUES(?,?)', [req.body.username, password], function(err) {
+        if (err) {
+            return console.error(err.message);
+        }
+    });
+    res.send({ result: 'SUCCESS', message: 'Created new user' });
+});
 
 app.get('/db/arr', function (req, res) {
     db.all('SELECT * FROM data', [], (err, rows) => {
@@ -137,9 +163,7 @@ wss.on('connection', function (ws, request) {
         });
 
         const dataObj = JSON.parse(message);
-        const date = new Date();
-        const dateString = date.toISOString();
-        const dataVals = [dateString, dataObj?.VehicleSpeed, dataObj?.EngineRPM, dataObj?.CoolantTemperature];
+        const dataVals = [dataObj?.timestamp, dataObj?.VehicleSpeed, dataObj?.EngineRPM, dataObj?.CoolantTemperature];
         db.run(sqlInsert, dataVals, function(err) {
             if (err) {
                 return console.error(err.message);
