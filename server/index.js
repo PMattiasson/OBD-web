@@ -46,14 +46,22 @@ db.get("PRAGMA foreign_keys = ON");
 db.run('CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, username VARCHAR(255) NOT NULL, password VARCHAR(255) NOT NULL)');
 db.run(`CREATE TABLE IF NOT EXISTS data(
     id INTEGER PRIMARY KEY AUTOINCREMENT, 
-    time TEXT NOT NULL, 
-    vehicle_speed INTEGER, 
-    engine_rpm INTEGER, 
-    coolant_temperature INTEGER, 
-    user_id INTEGER NOT NULL, 
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    timestamp INTEGER NOT NULL, 
+    vehicleSpeed INTEGER, 
+    engineRPM INTEGER, 
+    coolantTemperature INTEGER, 
+    userID INTEGER NOT NULL, 
+    FOREIGN KEY (userID) REFERENCES users(id)
     )`);
-const sqlInsert = 'INSERT INTO data(time, vehicle_speed, engine_rpm, coolant_temperature, user_id) VALUES(?,?,?,?,?)';
+db.run(`CREATE TABLE IF NOT EXISTS gps(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+    timestamp INTEGER NOT NULL, 
+    latitude REAL NOT NULL, 
+    longitude REAL NOT NULL,
+    userID INTEGER NOT NULL, 
+    FOREIGN KEY (userID) REFERENCES users(id)
+    )`)
+const sqlInsert = 'INSERT INTO data(timestamp, vehicleSpeed, engineRPM, coolantTemperature, userID) VALUES(?,?,?,?,?)';
 
 app.post('/login', function (req, res) {
     db.get('SELECT * FROM users WHERE username = ?', [req.body?.username], (err, user) => {
@@ -97,35 +105,38 @@ app.post('/register', function(req, res) {
     const password = createHash('md5').update(req.body.password).digest('hex');
 
     db.run('INSERT INTO users(username, password) VALUES(?,?)', [req.body.username, password], function(err) {
-        if (err) {
-            return console.error(err.message);
-        }
+        if (err) return console.error(err.message);
     });
     res.send({ result: 'SUCCESS', message: 'Created new user' });
 });
 
-app.get('/db/arr', function (req, res) {
-    db.all('SELECT * FROM data', [], (err, rows) => {
-        if (err) return console.log(err.message);
-        
-        let result = {};
-        rows.forEach((row) => {
-            Object.keys(row).forEach((key) => {
-                result[key] = (result[key] || []).concat([row[key]]);
-            })
-        })
+app.get('/users/:userId', (req, res) => {
+    const userID = req.params.userId;
+    db.all('SELECT * FROM data WHERE userID = ?', [userID], (err, rows) => {
+        if (err) return console.error(err.message);
 
-        res.send(result);
+        res.send(JSON.stringify(rows));
     });
 });
 
-app.get('/users/:userId', (req, res) => {
-    const user_id = req.params.userId;
-    db.all('SELECT * FROM data WHERE user_id = ?', [user_id], (err, rows) => {
+app.get('/users/:userId/:pidName', (req, res) => {
+    const userID = req.params.userId;
+    const pidName = req.params.pidName;
+    db.all(`SELECT timestamp, ${pidName} FROM data WHERE userID = ? AND ${pidName} IS NOT NULL`, [userID], (err, rows) => {
         if (err) return console.error(err.message);
 
-        res.send(rows);
+        res.send(JSON.stringify(rows));
     });
+});
+
+app.post('/api/gps', (req, res) => {
+    db.run('INSERT INTO gps(timestamp, latitude, longitude, userID) VALUES(?,?,?,?)', [req.body.timestamp, req.body.latitude, req.body.longitude, req.session.userId], function(err) {
+        if (err) {
+            res.status(400).send('Failed to add GPS coordinate');
+            return console.error(err.message);
+        }
+    });
+    res.status(201).send('GPS coordinate added');
 });
 
 app.get('/db', function (req, res) {
@@ -181,7 +192,7 @@ wss.on('connection', function (ws, request) {
         });
 
         const dataObj = JSON.parse(message);
-        const dataVals = [dataObj?.timestamp, dataObj?.VehicleSpeed, dataObj?.EngineRPM, dataObj?.CoolantTemperature, userId];
+        const dataVals = [dataObj?.timestamp, dataObj?.vehicleSpeed, dataObj?.engineRPM, dataObj?.coolantTemperature, userId];
         db.run(sqlInsert, dataVals, function(err) {
             if (err) {
                 return console.error(err.message);
