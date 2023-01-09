@@ -1,4 +1,5 @@
 // Auth: https://github.com/websockets/ws/blob/HEAD/examples/express-session-parse
+// WS: https://www.npmjs.com/package/ws
 
 import 'dotenv/config';
 import express from 'express';
@@ -7,13 +8,13 @@ import path from 'path';
 import WebSocketServer from 'ws';
 const http = require("http");
 import session from 'express-session';
-import { v4 as uuidv4 } from 'uuid';
 const sqlite3 = require('sqlite3').verbose();
 import { createHash } from 'crypto';
 
 const PORT = process.env.PORT;
 const USERNAME = process.env.USERNAME;
 const PASSWORD = process.env.PASSWORD;
+const responsePIDs = ['vehicleSpeed', 'engineRPM', 'coolantTemperature', 'throttlePosition', 'fuelPressure'];
 
 let data = null;
 
@@ -50,6 +51,8 @@ db.run(`CREATE TABLE IF NOT EXISTS data(
     vehicleSpeed INTEGER, 
     engineRPM INTEGER, 
     coolantTemperature INTEGER, 
+    throttlePosition INTEGER,
+    fuelPressure INTEGER,
     userID INTEGER NOT NULL, 
     FOREIGN KEY (userID) REFERENCES users(id)
     )`);
@@ -61,7 +64,7 @@ db.run(`CREATE TABLE IF NOT EXISTS gps(
     userID INTEGER NOT NULL, 
     FOREIGN KEY (userID) REFERENCES users(id)
     )`)
-const sqlInsert = 'INSERT INTO data(timestamp, vehicleSpeed, engineRPM, coolantTemperature, userID) VALUES(?,?,?,?,?)';
+const sqlInsert = 'INSERT INTO data(timestamp, vehicleSpeed, engineRPM, coolantTemperature, throttlePosition, fuelPressure, userID) VALUES(?,?,?,?,?,?,?)';
 
 app.post('/login', function (req, res) {
     db.get('SELECT * FROM users WHERE username = ?', [req.body?.username], (err, user) => {
@@ -119,9 +122,14 @@ app.get('/users/:userId', (req, res) => {
     });
 });
 
-app.get('/users/:userId/:pidName', (req, res) => {
-    const userID = req.params.userId;
+app.get('/user/data/:pidName', (req, res) => {
+    const userID = req.session.userId;
+    if (userID === undefined) return res.send('Unauthorized!');
+
     const pidName = req.params.pidName;
+    const indexPID = responsePIDs.findIndex((obj) => obj === pidName);
+    if (indexPID === -1) return console.log('Wrong PID parameter');
+
     db.all(`SELECT timestamp, ${pidName} FROM data WHERE userID = ? AND ${pidName} IS NOT NULL`, [userID], (err, rows) => {
         if (err) return console.error(err.message);
 
@@ -130,13 +138,25 @@ app.get('/users/:userId/:pidName', (req, res) => {
 });
 
 app.post('/api/gps', (req, res) => {
+    if (req.session.userId === undefined) return res.send('Unauthorized!');
+
     db.run('INSERT INTO gps(timestamp, latitude, longitude, userID) VALUES(?,?,?,?)', [req.body.timestamp, req.body.latitude, req.body.longitude, req.session.userId], function(err) {
         if (err) {
-            res.status(400).send('Failed to add GPS coordinate');
+            // res.status(400).send('Failed to add GPS coordinate');
             return console.error(err.message);
         }
     });
-    res.status(201).send('GPS coordinate added');
+    // res.status(201).send('GPS coordinate added');
+    console.log('Received GPS coordinates');
+});
+
+app.get('/api/gps', (req, res) => {
+    if (req.session.userId === undefined) return res.send('Unauthorized!');
+    
+    db.all(`SELECT latitude, longitude FROM gps WHERE userID = ?`, [req.session.userId], (err, rows) => {
+        if (err) return console.error(err.message);
+        res.send(JSON.stringify(rows));
+    });
 });
 
 app.get('/db', function (req, res) {
@@ -149,7 +169,7 @@ app.get('/db', function (req, res) {
 
 app.delete('/db', function (req, res) {
     if (req.body.password == PASSWORD) {
-        db.run('DELETE FROM data', (error) => {
+        db.run('DROP TABLE IF EXISTS data', (error) => {
             if (error) return console.log(error.message);
 
             res.send('Deleted database');
@@ -192,7 +212,7 @@ wss.on('connection', function (ws, request) {
         });
 
         const dataObj = JSON.parse(message);
-        const dataVals = [dataObj?.timestamp, dataObj?.vehicleSpeed, dataObj?.engineRPM, dataObj?.coolantTemperature, userId];
+        const dataVals = [dataObj?.timestamp, dataObj?.vehicleSpeed, dataObj?.engineRPM, dataObj?.coolantTemperature, dataObj?.throttlePosition, dataObj?.fuelPressure, userId];
         db.run(sqlInsert, dataVals, function(err) {
             if (err) {
                 return console.error(err.message);

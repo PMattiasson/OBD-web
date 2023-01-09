@@ -3,22 +3,29 @@ import { View } from 'react-native';
 import {
     VictoryAxis,
     VictoryChart,
+    VictoryLabel,
     VictoryLine,
     VictoryScatter,
     VictoryTheme,
     VictoryZoomContainer,
+    VictoryVoronoiContainer,
+    createContainer,
 } from 'victory-native';
 const _ = require('lodash');
+import responsePIDs from '../constants/PID-database';
 
-export default function Charts() {
-    const [data, setData] = useState([]);
+const VictoryZoomVoronoiContainer = createContainer('zoom', 'voronoi');
+
+export default function Charts({ pidName, url }) {
+    const [data, setData] = useState();
     const [zoomedXDomain, setZoomedXDomain] = useState([0, 1]);
-    const [maxPoints, setMaxPoints] = useState(150);
+    const [maxPoints, setMaxPoints] = useState(200);
     const [entireDomain, setEntireDomain] = useState();
+    const [PID, setPID] = useState();
 
     useEffect(() => {
         async function getUserData() {
-            fetch('http://localhost:3001/users/1', {
+            fetch(`${url}user/data/${pidName}`, {
                 headers: {
                     Accept: 'application/json',
                     'ngrok-skip-browser-warning': 1,
@@ -27,18 +34,20 @@ export default function Charts() {
                 .then((response) => response.json())
                 .then((responseData) => {
                     const data = responseData.map((item) => ({
-                        x: Date.parse(item.time),
-                        y: item.vehicle_speed,
+                        x: item.timestamp,
+                        y: item[pidName],
                     }));
-                    const domain = getEntireDomain(data);
                     setData(data);
+                    const domain = getEntireDomain(data);
                     setEntireDomain(domain);
                     setZoomedXDomain(domain.x);
+                    const pid = responsePIDs.find((obj) => obj.name === pidName);
+                    setPID(pid);
                 })
                 .catch((error) => console.log(error));
         }
         getUserData();
-    }, []);
+    }, [pidName]);
 
     function getData() {
         const startIndex = data.findIndex((d) => d.x >= zoomedXDomain[0]);
@@ -64,40 +73,54 @@ export default function Charts() {
         };
     }
 
-    const renderedData = getData();
+    const renderedData = data && getData();
 
     return (
-        <View style={{ maxHeight: 500, maxWidth: 1000, width: '100%', height: '100%' }}>
-            <VictoryChart
-                width={1000}
-                domain={entireDomain}
-                theme={VictoryTheme.material}
-                scale={{ x: 'time' }}
-                containerComponent={
-                    <VictoryZoomContainer
-                        zoomDimension="x"
-                        onZoomDomainChange={(domain) => setZoomedXDomain(domain.x)}
-                        minimumZoom={{ x: 1 }}
+        <View style={{ height: 500, width: 1000 }}>
+            {data && (
+                <VictoryChart
+                    width={1000}
+                    padding={{ left: 60 }}
+                    domain={entireDomain}
+                    domainPadding={{ y: [0, 10] }}
+                    theme={VictoryTheme.material}
+                    scale={{ x: 'time' }}
+                    containerComponent={
+                        <VictoryZoomVoronoiContainer
+                            zoomDimension="x"
+                            onZoomDomainChange={(domain) => setZoomedXDomain(domain.x)}
+                            minimumZoom={{ x: 1 }}
+                            labels={({ datum }) =>
+                                `${new Date(datum.x).toLocaleTimeString()}, ${datum.y} ${PID.unit}`
+                            }
+                            voronoiBlacklist={['scatter']}
+                        />
+                    }
+                >
+                    <VictoryAxis axisLabelComponent={<VictoryLabel dy={20} />} label={'Time'} />
+                    <VictoryAxis
+                        dependentAxis
+                        axisLabelComponent={<VictoryLabel dy={-30} />}
+                        label={`${PID?.description} (${PID?.unit})`}
                     />
-                }
-            >
-                <VictoryAxis />
-                <VictoryAxis dependentAxis />
-                <VictoryLine
-                    style={{
-                        data: { stroke: '#c43a31' },
-                        parent: { border: '1px solid #ccc' },
-                    }}
-                    data={renderedData}
-                />
-                <VictoryScatter
-                    style={{
-                        data: { fill: '#c43a31' },
-                        parent: { border: '1px solid #ccc' },
-                    }}
-                    data={renderedData}
-                />
-            </VictoryChart>
+                    <VictoryLine
+                        name="line"
+                        style={{
+                            data: { stroke: '#c43a31' },
+                            parent: { border: '1px solid #ccc' },
+                        }}
+                        data={renderedData}
+                    />
+                    <VictoryScatter
+                        name="scatter"
+                        style={{
+                            data: { fill: '#c43a31' },
+                            parent: { border: '1px solid #ccc' },
+                        }}
+                        data={renderedData}
+                    />
+                </VictoryChart>
+            )}
         </View>
     );
 }
